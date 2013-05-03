@@ -1,6 +1,6 @@
 ﻿TODO:
-- Write test that compares values 
 - Generate .thrift file
+- Write test that round-trips through C# thrift compiled reader/writer to check wire compatibility
 - Read .thrift file?
 - F# type provider
 - Spit out binary
@@ -21,3 +21,4 @@ DONE:
 - Enums
 - Match types using active patterns
 - Support generics
+- Write test that compares values 
