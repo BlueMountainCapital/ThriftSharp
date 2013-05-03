@@ -1,0 +1,23 @@
+﻿TODO:
+- Write test that compares values 
+- Generate .thrift file
+- Read .thrift file?
+- F# type provider
+- Spit out binary
+- Async Thrift DLL
+- Seq?
+- Memoize readers/writers?  Static lets are probably enough
+- Wrapper for Value Union type
+
+DONE:
+- Nested records
+- Option types as optional reads
+- Union types as Thrift unions
+- Tuples
+- Arrays
+- Lists
+- Sets
+- Maps
+- Enums
+- Match types using active patterns
+- Support generics
