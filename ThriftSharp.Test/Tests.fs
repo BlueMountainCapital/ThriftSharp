@@ -7,6 +7,11 @@ open Thrift.Transport
 open Xunit
 open FsCheck
 
+type MyClass(id: string) = 
+    member this.ID = id
+    override x.Equals y = y :? MyClass && x.ID = (y :?> MyClass).ID
+    override x.GetHashCode() = x.ID.GetHashCode()
+
 type MyEnum = 
     | Fuzzy = 0
     | Furry = 12
@@ -16,6 +21,11 @@ type Test2 = {
     Y: int32
     Z: int64
     AA: Option<string> * bool
+}
+
+type Test3 = {
+    A: string
+    B: MyClass
 }
 
 type Test<'a> = {
@@ -35,18 +45,33 @@ type Generators =
     static member MyDoubleGenerator() =
         Arb.Default.Float() |> Arb.filter (fun d -> not(Double.IsNaN(d) || Double.IsInfinity(d)))
 
-module Test = 
+module Test =
+    let writeMyClass (prot: TProtocol) (o: obj) =
+        let mc = o :?> MyClass
+        prot.WriteString(mc.ID)
+
+    let readMyClass (prot: TProtocol) =
+        let id = prot.ReadString()
+        box <| MyClass(id) 
+
+    let getCustomReader t =
+        if t = typeof<MyClass> then Some (TType.String, readMyClass)
+        else None
+    let getCustomWriter t =
+        if t = typeof<MyClass> then Some (TType.String, writeMyClass)
+        else None
+            
     let private serialize x = 
         use memBuffer = new TMemoryBuffer()
         let prot = TBinaryProtocol(memBuffer)
-        let wrapper = TBaseWrapper(x) :> TBase
+        let wrapper = TBaseWrapper(x, getCustomWriter) :> TBase
         wrapper.Write(prot)
         memBuffer.GetBuffer()
 
-    let private deserialize (mem: byte[]) = 
+    let private deserialize<'t> (mem: byte[]) = 
         use memBuffer = new TMemoryBuffer(mem)
         let prot = TBinaryProtocol(memBuffer)
-        let wrapper = TBaseWrapper()
+        let wrapper = TBaseWrapper<'t>(getCustomReader)
         (wrapper :> TBase).Read(prot)
         wrapper.Value
 
@@ -57,6 +82,11 @@ module Test =
 
     [<Property>]
     let ``Test2 round-trips`` (x:Test2) = roundtrips x
+
+    [<Property>]
+    let ``Test3 round-trips`` (x:string) =
+        let t3 = { Test3.A = x; B = MyClass(x) }
+        roundtrips t3
 
     [<Property(Arbitrary=[|typeof<Generators>|])>]
     let ``Union round-trips`` (x:Foo) = roundtrips x
