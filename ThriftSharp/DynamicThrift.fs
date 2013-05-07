@@ -30,28 +30,38 @@ module DynamicThrift =
         | Record    -> TType.Struct
         | ty        -> failwithf "Unsupported type %s" ty.Name
 
-    let rec thriftWriter ty : TProtocol -> obj -> unit = 
-        match ty with
-        | Bool      -> fun (prot: TProtocol) o -> prot.WriteBool(unbox o)
-        | Byte      -> fun (prot: TProtocol) o -> prot.WriteByte(unbox o)
-        | Double    -> fun (prot: TProtocol) o -> prot.WriteDouble(unbox o)
-        | Int16     -> fun (prot: TProtocol) o -> prot.WriteI16(unbox o)
-        | Int32     -> fun (prot: TProtocol) o -> prot.WriteI32(unbox o)
-        | Int64     -> fun (prot: TProtocol) o -> prot.WriteI64(unbox o)
-        | String    -> fun (prot: TProtocol) o -> prot.WriteString(unbox o)
-        | Enum      -> fun (prot: TProtocol) o -> prot.WriteI32((o :?> IConvertible).ToInt32(null))
-        | Array(t) 
-        | List(t)   -> seqWriter t
-        | Option(t) -> optionWriter ty t
-        | Set(t)    -> setWriter t
-        | Map(k,v)  -> mapWriter k v
-        | Union     -> unionWriter ty
-        | Tuple     -> tupleWriter ty
-        // We put Record last because other types are represented as records
-        | Record    -> recordWriter ty      
-        | ty        -> failwithf "Unsupported type %s" ty.Name
+    // Option types are used to represent optional fields
+    let private optionWriter t containedType thriftWriter =
+        let someReader = FSharpType.GetUnionCases(t) |> Array.find (fun ci -> ci.Name = "Some")
+                                                     |> FSharpValue.PreComputeUnionReader
+        let valWriter = thriftWriter containedType
 
-    and private mapWriter keyType valType = 
+        fun (prot: TProtocol) o ->
+            // We take advantage of the fact that None is represented as null
+            // For None, we just write nothing
+            if o <> null then
+                let vals = someReader o
+                valWriter prot vals.[0]         
+
+    let private seqWriter elemType thriftWriter =     
+        let elemTType = thriftType elemType
+        let elemWriter = thriftWriter elemType
+        fun (prot: TProtocol) (o: obj) ->
+            let elems = Seq.cast (o :?> Collections.IEnumerable)
+            prot.WriteListBegin(new TList(elemTType, Seq.length elems))
+            elems |> Seq.iter (elemWriter prot)
+            prot.WriteListEnd()
+
+    let private setWriter elemType thriftWriter =
+        let elemTType = thriftType elemType
+        let elemWriter = thriftWriter elemType
+        fun (prot: TProtocol) (o: obj) ->
+            let elems = Seq.cast (o :?> Collections.IEnumerable)
+            prot.WriteSetBegin(new TSet(elemTType, Seq.length elems))
+            elems |> Seq.iter (elemWriter prot)
+            prot.WriteSetEnd()
+    
+    let private mapWriter keyType valType thriftWriter = 
         // Map implements IEnumerable, exposing KeyValuePair<K,V>.  We serialize by enumerating those
         // and accessing keys and values by reflection.
         // The same code should work for serializing a .NET Dictionary
@@ -70,51 +80,8 @@ module DynamicThrift =
                 keyReader.Invoke(elem, [||]) |> keyWriter prot
                 valReader.Invoke(elem, [||]) |> valWriter prot
             prot.WriteMapEnd()        
-        
-    // Option types are used to represent optional fields
-    and private optionWriter t containedType =
-        let someReader = FSharpType.GetUnionCases(t) |> Array.find (fun ci -> ci.Name = "Some")
-                                                     |> FSharpValue.PreComputeUnionReader
-        let valWriter = thriftWriter containedType
 
-        fun (prot: TProtocol) o ->
-            // We take advantage of the fact that None is represented as null
-            // For None, we just write nothing
-            if o <> null then
-                let vals = someReader o
-                valWriter prot vals.[0]         
-
-    and private seqWriter elemType =     
-        let elemTType = thriftType elemType
-        let elemWriter = thriftWriter elemType
-        fun (prot: TProtocol) o ->
-            let elems = Seq.cast (o :?> Collections.IEnumerable)
-            prot.WriteListBegin(new TList(elemTType, Seq.length elems))
-            elems |> Seq.iter (elemWriter prot)
-            prot.WriteListEnd()
-
-    and private setWriter elemType =
-        let elemTType = thriftType elemType
-        let elemWriter = thriftWriter elemType
-        fun (prot: TProtocol) o ->
-            let elems = Seq.cast (o :?> Collections.IEnumerable)
-            prot.WriteSetBegin(new TSet(elemTType, Seq.length elems))
-            elems |> Seq.iter (elemWriter prot)
-            prot.WriteSetEnd()
-    
-    and private tupleWriter t =
-        let tupleElems = FSharpType.GetTupleElements(t)
-        let structInfo = [ for idx, ty in Seq.zip fieldIds tupleElems -> (idx.ToString(), ty, idx) ]
-        let tupleReader = FSharpValue.PreComputeTupleReader(t)
-        writeStruct t.Name structInfo tupleReader
-
-    and private recordWriter t = 
-        let recFields = FSharpType.GetRecordFields(t)
-        let structInfo = [ for idx, pi in Seq.zip fieldIds recFields -> (pi.Name, pi.PropertyType, idx) ]
-        let recReader = FSharpValue.PreComputeRecordReader(t)
-        writeStruct t.Name structInfo recReader
-
-    and private unionWriter (t: System.Type) : TProtocol -> obj -> unit =    
+    let private unionWriter t thriftWriter =    
         let tagReader = FSharpValue.PreComputeUnionTagReader(t)
         let cases = 
             [| for ci in FSharpType.GetUnionCases(t) ->
@@ -142,8 +109,8 @@ module DynamicThrift =
             prot.WriteFieldEnd() 
             prot.WriteFieldStop()
             prot.WriteStructEnd()
-
-    and private writeStruct name structInfo reader =
+    
+    let private writeStruct name structInfo reader thriftWriter =
         let fieldWriters = [
             for name, ty, idx in structInfo ->
                 let field = TField(name, thriftType ty, idx)
@@ -163,29 +130,104 @@ module DynamicThrift =
                 writer oprot v
             oprot.WriteFieldStop()
             oprot.WriteStructEnd()
+        
+    let private tupleWriter t thriftWriter =
+        let tupleElems = FSharpType.GetTupleElements(t)
+        let structInfo = [ for idx, ty in Seq.zip fieldIds tupleElems -> (idx.ToString(), ty, idx) ]
+        let tupleReader = FSharpValue.PreComputeTupleReader(t)
+        writeStruct t.Name structInfo tupleReader thriftWriter
 
-    let rec thriftReader ty = 
-        match ty with
-        | Bool      -> fun (prot: TProtocol) -> prot.ReadBool() |> box
-        | Byte      -> fun (prot: TProtocol) -> prot.ReadByte() |> box
-        | Double    -> fun (prot: TProtocol) -> prot.ReadDouble() |> box
-        | Int16     -> fun (prot: TProtocol) -> prot.ReadI16() |> box
-        | Int32     -> fun (prot: TProtocol) -> prot.ReadI32() |> box
-        | Int64     -> fun (prot: TProtocol) -> prot.ReadI64() |> box
-        | String    -> fun (prot: TProtocol) -> prot.ReadString() |> box
-        | Enum      -> fun (prot: TProtocol) -> Enum.ToObject(ty, prot.ReadI32())
-        | Option(t) -> optionReader ty t
-        | Array(t)  -> arrayReader ty t
-        | List(t)   -> listReader ty t
-        | Set(t)    -> setReader ty t
-        | Map(k,v)  -> mapReader ty k v
-        | Union     -> unionReader ty
-        | Tuple     -> tupleReader ty
-        // We put Record last because other types are represented as Records
-        | Record    -> recordReader ty
-        | ty        -> failwithf "Unsupported type %s" ty.Name
+    let private recordWriter t thriftWriter = 
+        let recFields = FSharpType.GetRecordFields(t)
+        let structInfo = [ for idx, pi in Seq.zip fieldIds recFields -> (pi.Name, pi.PropertyType, idx) ]
+        let recReader = FSharpValue.PreComputeRecordReader(t)
+        writeStruct t.Name structInfo recReader thriftWriter
 
-    and private mapReader mapType keyType valType = 
+    let rec thriftWriter customWriter ty : TProtocol -> obj -> unit =
+        // Function to pass into other writers to allow them to get a writers for another type
+        let getWriter = thriftWriter customWriter
+
+        match customWriter ty with 
+            | Some writer -> writer
+            | None ->
+                match ty with
+                | Bool      -> fun (prot: TProtocol) o -> prot.WriteBool(unbox o)
+                | Byte      -> fun (prot: TProtocol) o -> prot.WriteByte(unbox o)
+                | Double    -> fun (prot: TProtocol) o -> prot.WriteDouble(unbox o)
+                | Int16     -> fun (prot: TProtocol) o -> prot.WriteI16(unbox o)
+                | Int32     -> fun (prot: TProtocol) o -> prot.WriteI32(unbox o)
+                | Int64     -> fun (prot: TProtocol) o -> prot.WriteI64(unbox o)
+                | String    -> fun (prot: TProtocol) o -> prot.WriteString(unbox o)
+                | Enum      -> fun (prot: TProtocol) o -> prot.WriteI32((o :?> IConvertible).ToInt32(null))
+                | Option(t) -> optionWriter ty t getWriter
+                | Array(t) 
+                | List(t)   -> seqWriter t getWriter
+                | Set(t)    -> setWriter t getWriter
+                | Map(k,v)  -> mapWriter k v getWriter
+                | Union     -> unionWriter ty getWriter
+                | Tuple     -> tupleWriter ty getWriter
+                // We put Record last because other types are represented as records
+                | Record    -> recordWriter ty getWriter      
+                | ty        -> failwithf "Unsupported type %s" ty.Name
+
+    let private optionReader t containedType thriftReader =
+        let someCtor = FSharpType.GetUnionCases(t) |> Array.find (fun ci -> ci.Name = "Some")
+                                                   |> FSharpValue.PreComputeUnionConstructor
+                       
+        let valReader = thriftReader containedType
+
+        // We are only going to get called if we actually need to read a sum - otherwise we will just be skipped
+        fun (prot: TProtocol) ->
+            someCtor [| valReader prot |]
+
+    let private readElems elemType thriftReader =    
+        let elemReader = thriftReader elemType    
+        fun (prot: TProtocol) (count: int) ->
+            let arr = Array.CreateInstance(elemType, count)
+            for i in [0..count-1] do
+                let elem = elemReader prot
+                arr.SetValue(elem, i)
+            arr
+
+    let private arrayReader ty elemType thriftReader =             
+        let elemTType = thriftType elemType
+        let elemsReader = readElems elemType thriftReader
+        fun (prot: TProtocol) ->
+            let tlist = prot.ReadListBegin()
+            if tlist.ElementType <> elemTType then
+                failwithf "Expecting list of type %A but read %A" elemTType tlist.ElementType                
+            let arr = elemsReader prot tlist.Count         
+            prot.ReadListEnd()
+            box arr
+
+    let private listReader ty elemType thriftReader =
+        let arrReader = arrayReader ty elemType thriftReader
+        // This is rather ugly, but I can find no other way of invoking this static method via reflection
+        let listCtorMethodInfo = Type.GetType("Microsoft.FSharp.Collections.ListModule, FSharp.Core")   
+                                     .GetMethod("OfArray")
+                                     .MakeGenericMethod([|elemType|])
+        let listCtor = fun o -> listCtorMethodInfo.Invoke(null, [|o|])
+        arrReader >> listCtor
+
+    let private setReader ty elemType thriftReader =         
+        let elemTType = thriftType elemType
+        let elemsReader = readElems elemType thriftReader
+        // This is rather ugly, but I can find no other way of invoking this static method via reflection
+        let setCtorMethodInfo = Type.GetType("Microsoft.FSharp.Collections.SetModule, FSharp.Core")   
+                                     .GetMethod("OfArray")
+                                     .MakeGenericMethod([|elemType|])
+        let setCtor = fun o -> setCtorMethodInfo.Invoke(null, [|o|])
+
+        fun (prot: TProtocol) ->
+            let tset = prot.ReadSetBegin()
+            if tset.ElementType <> elemTType then
+                failwithf "Expecting set of type %A but read %A" elemTType tset.ElementType
+        
+            let arr = elemsReader prot tset.Count
+            prot.ReadSetEnd()
+            setCtor arr
+
+    let private mapReader (mapType: Type) keyType valType thriftReader = 
         // We read a map by constructing an array of tuples, then invoking the Map constructor
         let tupleType = FSharpType.MakeTupleType([| keyType; valType |])
         let tupleCtor = FSharpValue.PreComputeTupleConstructor(tupleType)
@@ -203,74 +245,7 @@ module DynamicThrift =
             prot.ReadMapEnd()
             mapCtor.Invoke([|arr|])
 
-    and private optionReader t containedType =
-        let someCtor = FSharpType.GetUnionCases(t) |> Array.find (fun ci -> ci.Name = "Some")
-                                                   |> FSharpValue.PreComputeUnionConstructor
-                       
-        let valReader = thriftReader containedType
-
-        // We are only going to get called if we actually need to read a sum - otherwise we will just be skipped
-        fun (prot: TProtocol) ->
-            someCtor [| valReader prot |]
-        
-    and private arrayReader ty elemType : TProtocol -> obj =             
-        let elemTType = thriftType elemType
-        let elemsReader = readElems elemType
-        fun (prot: TProtocol) ->
-            let tlist = prot.ReadListBegin()
-            if tlist.ElementType <> elemTType then
-                failwithf "Expecting list of type %A but read %A" elemTType tlist.ElementType                
-            let arr = elemsReader prot tlist.Count         
-            prot.ReadListEnd()
-            upcast arr
-
-    and private readElems elemType =    
-        let elemReader = thriftReader elemType    
-        fun (prot: TProtocol) (count: int) ->
-            let arr = Array.CreateInstance(elemType, count)
-            for i in [0..count-1] do
-                let elem = elemReader prot
-                arr.SetValue(elem, i)
-            arr
-
-    and private listReader ty elemType : TProtocol -> obj =
-        let arrReader = arrayReader ty elemType
-        // This is rather ugly, but I can find no other way of invoking this static method via reflection
-        let listCtorMethodInfo = Type.GetType("Microsoft.FSharp.Collections.ListModule, FSharp.Core")   
-                                     .GetMethod("OfArray")
-                                     .MakeGenericMethod([|elemType|])
-        let listCtor = fun o -> listCtorMethodInfo.Invoke(null, [|o|])
-        arrReader >> listCtor
-
-    and private setReader ty elemType : TProtocol -> obj =         
-        let elemTType = thriftType elemType
-        let elemsReader = readElems elemType
-        // This is rather ugly, but I can find no other way of invoking this static method via reflection
-        let setCtorMethodInfo = Type.GetType("Microsoft.FSharp.Collections.SetModule, FSharp.Core")   
-                                     .GetMethod("OfArray")
-                                     .MakeGenericMethod([|elemType|])
-        let setCtor = fun o -> setCtorMethodInfo.Invoke(null, [|o|])
-
-        fun (prot: TProtocol) ->
-            let tset = prot.ReadSetBegin()
-            if tset.ElementType <> elemTType then
-                failwithf "Expecting set of type %A but read %A" elemTType tset.ElementType
-        
-            let arr = elemsReader prot tset.Count
-            prot.ReadSetEnd()
-            setCtor arr
-
-    and private tupleReader t : TProtocol -> obj = 
-        let tupleInfo = FSharpType.GetTupleElements(t)
-        let ctor = FSharpValue.PreComputeTupleConstructor t
-        structReader tupleInfo ctor
-
-    and private recordReader t : TProtocol -> obj =
-        let typeInfo = [| for pi in FSharpType.GetRecordFields(t) -> pi.PropertyType |]
-        let ctor = FSharpValue.PreComputeRecordConstructor t
-        structReader typeInfo ctor
-
-    and private unionReader t : TProtocol -> obj  =    
+    let private unionReader t thriftReader  =    
         let cases = 
             [| for ci in FSharpType.GetUnionCases t ->                         
                 match ci.GetFields() with
@@ -291,7 +266,7 @@ module DynamicThrift =
 
             ctor [| value |]
 
-    and private structReader typeInfo ctor : TProtocol -> obj = 
+    let private structReader typeInfo ctor thriftReader = 
         let fieldReaders = [|
             for ty in typeInfo ->
                 let ttype = thriftType ty
@@ -304,7 +279,7 @@ module DynamicThrift =
                         reader iprot
         |]
 
-        let numFields = typeInfo.Length
+        let numFields = Array.length typeInfo
 
         fun (iprot: TProtocol)  ->
             let data = Array.zeroCreate numFields
@@ -327,22 +302,90 @@ module DynamicThrift =
             iprot.ReadStructEnd() |> ignore
             unbox <| ctor data
 
-    let readerFor<'t> = thriftReader typeof<'t> >> unbox<'t>
-    let writerFor<'t> : TProtocol -> 't -> unit = thriftWriter typeof<'t>
 
-/// Wrapper class used to serialize & deserialize an F# type using Thrift
-type TBaseWrapper<'t>(t) =
-    static let reader = DynamicThrift.readerFor<'t>
-    static let writer = DynamicThrift.writerFor<'t>
-    let mutable value = t
+    let private tupleReader t = 
+        let tupleInfo = FSharpType.GetTupleElements(t)
+        let ctor = FSharpValue.PreComputeTupleConstructor t
+        structReader tupleInfo ctor
 
-    member this.Value = value
+    let private recordReader t  =
+        let typeInfo = [| for pi in FSharpType.GetRecordFields(t) -> pi.PropertyType |]
+        let ctor = FSharpValue.PreComputeRecordConstructor t
+        structReader typeInfo ctor
 
-    new() = TBaseWrapper(Unchecked.defaultof<'t>)
+    let rec thriftReader customReader ty =
+        // Function to pass into other readers to allow them to get a reader for another type
+        let getReader = thriftReader customReader
+         
+        match customReader ty with
+        | Some(reader) -> reader
+        | None ->
+            match ty with
+            | Bool      -> fun (prot: TProtocol) -> prot.ReadBool() |> box
+            | Byte      -> fun (prot: TProtocol) -> prot.ReadByte() |> box
+            | Double    -> fun (prot: TProtocol) -> prot.ReadDouble() |> box
+            | Int16     -> fun (prot: TProtocol) -> prot.ReadI16() |> box
+            | Int32     -> fun (prot: TProtocol) -> prot.ReadI32() |> box
+            | Int64     -> fun (prot: TProtocol) -> prot.ReadI64() |> box
+            | String    -> fun (prot: TProtocol) -> prot.ReadString() |> box
+            | Enum      -> fun (prot: TProtocol) -> Enum.ToObject(ty, prot.ReadI32())
+            | Option(t) -> optionReader ty t getReader
+            | Array(t)  -> arrayReader ty t getReader
+            | List(t)   -> listReader ty t getReader
+            | Set(t)    -> setReader ty t getReader
+            | Map(k,v)  -> mapReader ty k v getReader
+            | Union     -> unionReader ty getReader
+            | Tuple     -> tupleReader ty getReader
+            // We put Record last because other types are represented as Records
+            | Record    -> recordReader ty getReader
+            | ty        -> failwithf "Unsupported type %s" ty.Name
+    
+    let internal wrapReader (getCustomReader: Func<System.Type, Func<TProtocol, obj>>) =
+        match getCustomReader with
+        | null -> fun _ -> None
+        | f    -> fun t -> match getCustomReader.Invoke(t) with
+                            | null -> None
+                            | f -> Some(f.Invoke)
 
-    interface TBase with
-        member x.Read(prot: TProtocol) = 
-            let v = reader prot            
-            value <- v
-        member x.Write(prot: TProtocol) =                 
-            writer prot value
+    /// C#-friendly wrapper to get a reader for a given type.
+    /// getCustomReader is an optional function that can be used to provide type-specific reader
+    let GetReaderFor(valType: System.Type, getCustomReader: Func<System.Type, Func<TProtocol, obj>>) = 
+        let customReader = wrapReader getCustomReader
+        Func<TProtocol,obj>(thriftReader customReader valType)
+
+    let internal wrapWriter (getCustomWriter: Func<System.Type, Action<TProtocol, obj>>) =
+        match getCustomWriter with
+        | null -> fun _ -> None
+        | f    -> fun t -> match getCustomWriter.Invoke(t) with
+                            | null -> None
+                            | f -> Some(fun prot o -> f.Invoke(prot, o))
+
+    /// C#-friendly wrapper to get a writer for a given type.
+    /// getCustomWriter is an optional function that can be used to provide type-specific writer
+    let GetWriterFor(valType: System.Type, getCustomWriter) =
+        let customWriter = wrapWriter getCustomWriter
+        Action<TProtocol,obj>(thriftWriter customWriter valType)
+
+    let readerFor<'t> getCustomReader = 
+        thriftReader getCustomReader typeof<'t>  >> unbox<'t>
+    
+    let writerFor<'t> getCustomWriter = 
+        thriftWriter getCustomWriter typeof<'t>
+
+/////// Wrapper class used to serialize & deserialize an F# type using Thrift
+//type TBaseWrapper<'t>(t: 't, getCustomReader : Type -> Option<TProtocol -> obj>, getCustomWriter : Type -> Option<TProtocol -> obj -> unit>) =
+//    let reader = DynamicThrift.readerFor<'t> getCustomReader
+//    let writer = DynamicThrift.writerFor<'t> getCustomWriter
+//    let mutable value = t
+//
+//    member this.Value = value
+//
+//    new() = TBaseWrapper(Unchecked.defaultof<'t>, (fun _ -> None), (fun _ -> None))
+//
+//    interface TBase with
+//        member x.Read(prot: TProtocol) = 
+//            let v = reader prot            
+//            value <- v
+//        member x.Write(prot: TProtocol) =                 
+//            writer prot value
+

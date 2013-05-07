@@ -50,7 +50,7 @@
     <Reference Include="System.Core" />
     <Reference Include="System.Numerics" />
     <Reference Include="Thrift">
-      <HintPath>packages\Thrift.0.9.0.0\lib\net35\Thrift.dll</HintPath>
+      <HintPath>..\packages\Thrift.0.9.0.0\lib\net35\Thrift.dll</HintPath>
       <Private>True</Private>
     </Reference>
   </ItemGroup>
