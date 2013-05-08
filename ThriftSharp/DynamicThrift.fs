@@ -4,16 +4,19 @@ open Microsoft.FSharp.Reflection
 open Thrift.Protocol
 open Thrift.Transport
 open System
+open System.Reflection
 open TypeHelpers
 
 module DynamicThrift = 
 
     let private fieldIds = Seq.initInfinite int16
+    let private bindingFlags = BindingFlags.Public ||| BindingFlags.NonPublic
 
     // Option types are used to represent optional fields
     let private optionWriter t containedType thriftWriter =
-        let someReader = FSharpType.GetUnionCases(t) |> Array.find (fun ci -> ci.Name = "Some")
-                                                     |> FSharpValue.PreComputeUnionReader
+        let someReader = let someCase = FSharpType.GetUnionCases(t, bindingFlags) 
+                                        |> Array.find (fun ci -> ci.Name = "Some")
+                         FSharpValue.PreComputeUnionReader(someCase, bindingFlags)
         let ttype, valWriter = thriftWriter containedType
 
         ttype, fun (prot: TProtocol) o ->
@@ -58,16 +61,16 @@ module DynamicThrift =
             prot.WriteMapEnd()        
 
     let private unionWriter t thriftWriter =    
-        let tagReader = FSharpValue.PreComputeUnionTagReader(t)
+        let tagReader = FSharpValue.PreComputeUnionTagReader(t, bindingFlags)
         let cases = 
-            [| for ci in FSharpType.GetUnionCases(t) ->
+            [| for ci in FSharpType.GetUnionCases(t, bindingFlags) ->
                 let fld, writer = 
                     match ci.GetFields() with
                     | [| pi |] -> let ttype, writer = thriftWriter pi.PropertyType
                                   TField(ci.Name, ttype, int16 ci.Tag), writer
                     | _ -> failwithf "ThriftWriter is not compatible with type %s - union cases must have exactly one data value" t.Name
 
-                let unionReader = FSharpValue.PreComputeUnionReader ci
+                let unionReader = FSharpValue.PreComputeUnionReader(ci, bindingFlags)
                 let reader = fun o -> match unionReader o with
                                       | [| v |] -> v 
                                       | _       -> failwithf "CaseReader failed to return correct number of elements"
@@ -115,9 +118,9 @@ module DynamicThrift =
         writeStruct t.Name structInfo tupleReader thriftWriter
 
     let private recordWriter t thriftWriter = 
-        let recFields = FSharpType.GetRecordFields(t)
+        let recFields = FSharpType.GetRecordFields(t, bindingFlags)
         let structInfo = [ for idx, pi in Seq.zip fieldIds recFields -> (pi.Name, pi.PropertyType, idx) ]
-        let recReader = FSharpValue.PreComputeRecordReader(t)
+        let recReader = FSharpValue.PreComputeRecordReader(t, bindingFlags)
         writeStruct t.Name structInfo recReader thriftWriter
 
     let rec thriftWriter customWriter ty : (TType * (TProtocol -> obj -> unit)) =
@@ -148,8 +151,8 @@ module DynamicThrift =
                 | ty        -> failwithf "Unsupported type %s" ty.Name
 
     let private optionReader t containedType thriftReader =
-        let someCtor = FSharpType.GetUnionCases(t) |> Array.find (fun ci -> ci.Name = "Some")
-                                                   |> FSharpValue.PreComputeUnionConstructor
+        let someCtor = let someCase = FSharpType.GetUnionCases(t, bindingFlags) |> Array.find (fun ci -> ci.Name = "Some")
+                       FSharpValue.PreComputeUnionConstructor(someCase, bindingFlags)
                        
         let valType, valReader = thriftReader containedType
 
@@ -222,9 +225,9 @@ module DynamicThrift =
 
     let private unionReader t thriftReader  =    
         let cases = 
-            [| for ci in FSharpType.GetUnionCases t ->                         
+            [| for ci in FSharpType.GetUnionCases(t, bindingFlags) ->                         
                 match ci.GetFields() with
-                | [| pi |] -> FSharpValue.PreComputeUnionConstructor(ci), thriftReader pi.PropertyType
+                | [| pi |] -> FSharpValue.PreComputeUnionConstructor(ci, bindingFlags), thriftReader pi.PropertyType
                 | _ -> failwithf "Thrift reader is not compatible with type %s - union cases must have exactly one data value" t.Name
             |] 
 
@@ -283,8 +286,8 @@ module DynamicThrift =
         structReader tupleInfo ctor
 
     let private recordReader t  =
-        let typeInfo = [| for pi in FSharpType.GetRecordFields(t) -> pi.PropertyType |]
-        let ctor = FSharpValue.PreComputeRecordConstructor t
+        let typeInfo = [| for pi in FSharpType.GetRecordFields(t, bindingFlags) -> pi.PropertyType |]
+        let ctor = FSharpValue.PreComputeRecordConstructor(t, bindingFlags)
         structReader typeInfo ctor
 
     let rec thriftReader customReader ty =

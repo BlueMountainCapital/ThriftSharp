@@ -4,10 +4,12 @@ module TypeHelpers =
 
     open Microsoft.FSharp.Reflection
     open System
+    open System.Reflection
 
     let private decomposeSingleGeneric<'genericType> (ty: System.Type) =
         if ty.IsConstructedGenericType && ty.GetGenericTypeDefinition() = typedefof<'genericType> then Some(ty.GenericTypeArguments.[0]) else None
- 
+    let private bindingFlags = BindingFlags.Public ||| BindingFlags.NonPublic
+
     // Some active patterns to make matching on System.Types more pleasing
     let (|Bool|_|)   (ty: System.Type) = if ty = typeof<bool> then Some() else None
     let (|Byte|_|)   (ty: System.Type) = if ty = typeof<byte> then Some() else None
@@ -16,9 +18,9 @@ module TypeHelpers =
     let (|Int32|_|)  (ty: System.Type) = if ty = typeof<Int32> then Some() else None
     let (|Int64|_|)  (ty: System.Type) = if ty = typeof<Int64> then Some() else None
     let (|String|_|) (ty: System.Type) = if ty = typeof<string> then Some() else None
-    let (|Record|_|) (ty: System.Type) = if FSharpType.IsRecord(ty) then Some() else None
+    let (|Record|_|) (ty: System.Type) = if FSharpType.IsRecord(ty, bindingFlags) then Some() else None
     let (|Option|_|) (ty: System.Type) = decomposeSingleGeneric<Option<_>> ty
-    let (|Union|_|)  (ty: System.Type) = if FSharpType.IsUnion(ty) then Some() else None
+    let (|Union|_|)  (ty: System.Type) = if FSharpType.IsUnion(ty, bindingFlags) then Some() else None
     let (|Tuple|_|)  (ty: System.Type) = if FSharpType.IsTuple(ty) then Some() else None
     let (|Array|_|)  (ty: System.Type) = if ty.IsArray then Some(ty.GetElementType()) else None
     let (|List|_|)   (ty: System.Type) = decomposeSingleGeneric<list<_>> ty
