@@ -7,6 +7,20 @@ open System
 open System.Reflection
 open TypeHelpers
 
+type Proxy = {
+    RealType: Type
+    ProxyType: Type
+    RealToProxy: obj -> obj
+    ProxyToReal: obj -> obj
+} 
+with 
+    static member Create<'realType, 'proxy> (realToProxy: 'realType -> 'proxy, proxyToReal: 'proxy -> 'realType) = {
+        RealType = typeof<'realType>
+        ProxyType = typeof<'proxy>
+        RealToProxy = unbox >> realToProxy >> box
+        ProxyToReal = unbox >> proxyToReal >> box
+    }
+        
 module DynamicThrift = 
 
     let private fieldIds = Seq.initInfinite int16
@@ -123,12 +137,14 @@ module DynamicThrift =
         let recReader = FSharpValue.PreComputeRecordReader(t, bindingFlags)
         writeStruct t.Name structInfo recReader thriftWriter
 
-    let rec thriftWriter customWriter ty : (TType * (TProtocol -> obj -> unit)) =
+    let rec thriftWriter tryGetProxy ty : (TType * (TProtocol -> obj -> unit)) =
         // Function to pass into other writers to allow them to get a writers for another type
-        let getWriter = thriftWriter customWriter
+        let getWriter = thriftWriter tryGetProxy
 
-        match customWriter ty with 
-            | Some (ttype, writer) -> (ttype, writer)
+        match tryGetProxy ty with 
+            | Some { ProxyType = proxyType; RealToProxy = realToProxy } ->
+                let ttype, proxyWriter = getWriter proxyType
+                ttype, fun prot -> realToProxy >> proxyWriter prot 
             | None ->
                 match ty with
                 | Bool      -> TType.Bool,      fun (prot: TProtocol) o -> prot.WriteBool(unbox o)
@@ -290,12 +306,14 @@ module DynamicThrift =
         let ctor = FSharpValue.PreComputeRecordConstructor(t, bindingFlags)
         structReader typeInfo ctor
 
-    let rec thriftReader customReader ty =
+    let rec thriftReader tryGetProxy ty =
         // Function to pass into other readers to allow them to get a reader for another type
-        let getReader = thriftReader customReader
+        let getReader = thriftReader tryGetProxy
          
-        match customReader ty with
-        | Some(reader) -> reader
+        match tryGetProxy ty with
+        | Some { ProxyType = proxyType; ProxyToReal = proxyToReal } ->
+            let ttype, proxyReader = getReader proxyType
+            ttype, proxyReader >> proxyToReal
         | None ->
             match ty with
             | Bool      -> TType.Bool,   fun (prot: TProtocol) -> prot.ReadBool() |> box
@@ -317,54 +335,51 @@ module DynamicThrift =
             | Record    -> TType.Struct, recordReader ty getReader
             | ty        -> failwithf "Unsupported type %s" ty.Name
     
-    let internal wrapReader (getCustomReader: Func<System.Type, Tuple<TType, Func<TProtocol, obj>>>) =
-        match getCustomReader with
-        | null -> fun _ -> None
-        | f    -> fun t -> match getCustomReader.Invoke(t) with
-                            | null -> None
-                            | tpl -> Some(tpl.Item1, tpl.Item2.Invoke)
+//    let internal wrapReader (getCustomReader: Func<System.Type, Tuple<TType, Func<TProtocol, obj>>>) =
+//        match getCustomReader with
+//        | null -> fun _ -> None
+//        | f    -> fun t -> match getCustomReader.Invoke(t) with
+//                            | null -> None
+//                            | tpl -> Some(tpl.Item1, tpl.Item2.Invoke)
 
     /// C#-friendly wrapper to get a reader for a given type.
     /// getCustomReader is an optional function that can be used to provide type-specific reader
-    let GetReaderFor(valType: System.Type, getCustomReader: Func<System.Type, Tuple<TType, Func<TProtocol, obj>>>) = 
-        let customReader = wrapReader getCustomReader
-        let ttype, reader = thriftReader customReader valType
+    let GetReaderFor(valType: System.Type, tryGetProxy) = 
+        let ttype, reader = thriftReader tryGetProxy valType
         Func<TProtocol,obj>(reader)
 
-    let internal wrapWriter (getCustomWriter: Func<System.Type, Tuple<TType, Action<TProtocol, obj>>>) =
-        match getCustomWriter with
-        | null -> fun _ -> None
-        | f    -> fun t -> match getCustomWriter.Invoke(t) with
-                            | null -> None
-                            | tpl -> Some(tpl.Item1, fun prot o -> tpl.Item2.Invoke(prot, o))
+//    let internal wrapWriter (getCustomWriter: Func<System.Type, Tuple<TType, Action<TProtocol, obj>>>) =
+//        match getCustomWriter with
+//        | null -> fun _ -> None
+//        | f    -> fun t -> match getCustomWriter.Invoke(t) with
+//                            | null -> None
+//                            | tpl -> Some(tpl.Item1, fun prot o -> tpl.Item2.Invoke(prot, o))
 
     /// C#-friendly wrapper to get a writer for a given type.
     /// getCustomWriter is an optional function that can be used to provide type-specific writer
-    let GetWriterFor(valType: System.Type, getCustomWriter) =
-        let customWriter = wrapWriter getCustomWriter
-        let ttype, writer = thriftWriter customWriter valType
+    let GetWriterFor(valType: System.Type, tryGetProxy) =
+        let ttype, writer = thriftWriter tryGetProxy valType
         Action<TProtocol,obj>(writer)
 
-    let readerFor<'t> getCustomReader = 
-        let ttype, reader = thriftReader getCustomReader typeof<'t> 
+    let readerFor<'t> tryGetProxy = 
+        let ttype, reader = thriftReader tryGetProxy typeof<'t> 
         reader >> unbox<'t>
     
-    let writerFor<'t> getCustomWriter = 
-        let ttype, writer = thriftWriter getCustomWriter typeof<'t>
+    let writerFor<'t> tryGetProxy = 
+        let ttype, writer = thriftWriter tryGetProxy typeof<'t>
         fun (prot: TProtocol) (t: 't) -> writer prot (box t)
 
 /// Wrapper class used to serialize & deserialize an F# type using Thrift
-type TBaseWrapper<'t>(t: 't, getCustomReader : Type -> Option<TType * (TProtocol -> obj)>, getCustomWriter : Type -> Option<TType * (TProtocol -> obj -> unit)>) =
-    let reader = lazy DynamicThrift.readerFor<'t> getCustomReader
-    let writer = lazy DynamicThrift.writerFor<'t> getCustomWriter
+type TBaseWrapper<'t>(t: 't, tryGetProxy: Type -> Proxy option) =
+    let reader = lazy DynamicThrift.readerFor<'t> tryGetProxy
+    let writer = lazy DynamicThrift.writerFor<'t> tryGetProxy
     let mutable value = t
 
     member this.Value = value
 
-    new() = TBaseWrapper(Unchecked.defaultof<'t>, (fun _ -> None), (fun _ -> None))
-    new(t) = TBaseWrapper(t, (fun _ -> None), (fun _ -> None))
-    new(getCustomReader) = TBaseWrapper(Unchecked.defaultof<'t>, getCustomReader, (fun _ -> None))
-    new(t, getCustomWriter) = TBaseWrapper(t, (fun _ -> None), getCustomWriter)
+    new() = TBaseWrapper(Unchecked.defaultof<'t>, (fun _ -> None))
+    new(t) = TBaseWrapper(t, (fun _ -> None))
+    new(tryGetProxy) = TBaseWrapper(Unchecked.defaultof<'t>, tryGetProxy)
 
     interface TBase with
         member x.Read(prot: TProtocol) = 

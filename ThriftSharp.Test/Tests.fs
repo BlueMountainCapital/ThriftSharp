@@ -40,38 +40,35 @@ type Foo =
     | Baz of Test2[]
     | Dub of double
 
+type MyClassProxy = {
+    ID: string
+}
+
 type Generators =
     // Override the double generaor so we don't get NaNs etc which don't compare equal
     static member MyDoubleGenerator() =
         Arb.Default.Float() |> Arb.filter (fun d -> not(Double.IsNaN(d) || Double.IsInfinity(d)))
 
+
 module Test =
-    let writeMyClass (prot: TProtocol) (o: obj) =
-        let mc = o :?> MyClass
-        prot.WriteString(mc.ID)
+    open DynamicThrift
+    let proxies = [|
+        Proxy.Create((fun (myClass: MyClass) -> { ID = myClass.ID }), (fun proxy -> MyClass(proxy.ID)))
+    |]
 
-    let readMyClass (prot: TProtocol) =
-        let id = prot.ReadString()
-        box <| MyClass(id) 
+    let tryGetProxy t = proxies |> Array.tryFind (fun proxy -> proxy.RealType.IsAssignableFrom(t))
 
-    let getCustomReader t =
-        if t = typeof<MyClass> then Some (TType.String, readMyClass)
-        else None
-    let getCustomWriter t =
-        if t = typeof<MyClass> then Some (TType.String, writeMyClass)
-        else None
-            
     let private serialize x = 
         use memBuffer = new TMemoryBuffer()
         let prot = TBinaryProtocol(memBuffer)
-        let wrapper = TBaseWrapper(x, getCustomWriter) :> TBase
+        let wrapper = TBaseWrapper(x, tryGetProxy) :> TBase
         wrapper.Write(prot)
         memBuffer.GetBuffer()
 
     let private deserialize<'t> (mem: byte[]) = 
         use memBuffer = new TMemoryBuffer(mem)
         let prot = TBinaryProtocol(memBuffer)
-        let wrapper = TBaseWrapper<'t>(getCustomReader)
+        let wrapper = TBaseWrapper<'t>(tryGetProxy)
         (wrapper :> TBase).Read(prot)
         wrapper.Value
 
