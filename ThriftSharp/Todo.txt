@@ -1,15 +1,15 @@
 ﻿TODO:
-- Generate .thrift file
-- Write test that round-trips through C# thrift compiled reader/writer to check wire compatibility
 - Read .thrift file?
 - F# type provider
+- Dynamic in-memory representation of thrift data (based on .thrift file)
 - Spit out binary
 - Async Thrift DLL
 - Seq?
-- Memoize readers/writers?  Static lets are probably enough
-- Wrapper for Value Union type
+- Memoize readers/writers? 
 
 DONE:
+- Generate .thrift file
+- Write test that round-trips through C# thrift compiled reader/writer to check wire compatibility
 - Nested records
 - Option types as optional reads
 - Union types as Thrift unions

@@ -5,12 +5,12 @@
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
     <SchemaVersion>2.0</SchemaVersion>
-    <ProjectGuid>9ed3421e-3a6b-4a78-8ee6-0164b56dc725</ProjectGuid>
-    <OutputType>Library</OutputType>
-    <RootNamespace>ThriftSharp.Test</RootNamespace>
-    <AssemblyName>ThriftSharp.Test</AssemblyName>
+    <ProjectGuid>0083fb53-53a7-4fa2-aed9-d9a31cb634a2</ProjectGuid>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>ThriftSharp.ThriftGenerator</RootNamespace>
+    <AssemblyName>ThriftSharp.ThriftGenerator</AssemblyName>
     <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
-    <Name>ThriftSharp.Test</Name>
+    <Name>ThriftSharp.ThriftGenerator</Name>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
@@ -20,7 +20,9 @@
     <OutputPath>bin\Debug\</OutputPath>
     <DefineConstants>DEBUG;TRACE</DefineConstants>
     <WarningLevel>3</WarningLevel>
-    <DocumentationFile>bin\Debug\ThriftSharp.Test.XML</DocumentationFile>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <DocumentationFile>bin\Debug\ThriftSharp.ThriftGenerator.XML</DocumentationFile>
+    <Prefer32Bit>true</Prefer32Bit>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
     <DebugType>pdbonly</DebugType>
@@ -29,52 +31,28 @@
     <OutputPath>bin\Release\</OutputPath>
     <DefineConstants>TRACE</DefineConstants>
     <WarningLevel>3</WarningLevel>
-    <DocumentationFile>bin\Release\ThriftSharp.Test.XML</DocumentationFile>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <DocumentationFile>bin\Release\ThriftSharp.ThriftGenerator.XML</DocumentationFile>
+    <Prefer32Bit>true</Prefer32Bit>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="FsCheck">
-      <HintPath>..\packages\FsCheck.0.8.3.0\lib\net40-Client\FsCheck.dll</HintPath>
-      <Private>True</Private>
-    </Reference>
-    <Reference Include="FsCheck.Xunit">
-      <HintPath>..\packages\FsCheck.Xunit.0.3.0.0\lib\net40-Client\FsCheck.Xunit.dll</HintPath>
-      <Private>True</Private>
-    </Reference>
     <Reference Include="mscorlib" />
     <Reference Include="FSharp.Core, Version=4.3.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a">
       <Private>True</Private>
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Core" />
-    <Reference Include="System.Data" />
     <Reference Include="System.Numerics" />
-    <Reference Include="System.Runtime.Serialization" />
-    <Reference Include="Thrift">
-      <HintPath>..\packages\Thrift.0.9.0.0\lib\net35\Thrift.dll</HintPath>
-      <Private>True</Private>
-    </Reference>
-    <Reference Include="xunit">
-      <HintPath>..\packages\xunit.1.9.1\lib\net20\xunit.dll</HintPath>
+    <Reference Include="Thrift, Version=0.9.0.0, Culture=neutral, PublicKeyToken=null">
       <Private>True</Private>
     </Reference>
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="TMemoryBuffer.fs" />
-    <Compile Include="Tests.fs" />
+    <Compile Include="Program.fs" />
+    <None Include="App.config" />
     <None Include="packages.config" />
-    <None Include="app.config" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\ThriftSharp.Test.ThriftGenerated\ThriftSharp.Test.ThriftGenerated.csproj">
-      <Name>ThriftSharp.Test.ThriftGenerated</Name>
-      <Project>{104d1fd3-e0db-4ddd-bbdf-9fbb59f1b86f}</Project>
-      <Private>True</Private>
-    </ProjectReference>
-    <ProjectReference Include="..\ThriftSharp.TestTypes\ThriftSharp.TestTypes.fsproj">
-      <Name>ThriftSharp.TestTypes</Name>
-      <Project>{d196d0bf-18be-418d-871c-2b2fe38f74f7}</Project>
-      <Private>True</Private>
-    </ProjectReference>
     <ProjectReference Include="..\ThriftSharp\ThriftSharp.fsproj">
       <Name>ThriftSharp</Name>
       <Project>{5d2a7450-f061-430b-90d5-6978d922cf2b}</Project>
@@ -85,10 +63,6 @@
     <MinimumVisualStudioVersion Condition="'$(MinimumVisualStudioVersion)' == ''">11</MinimumVisualStudioVersion>
   </PropertyGroup>
   <Import Project="$(MSBuildExtensionsPath32)\..\Microsoft SDKs\F#\3.0\Framework\v4.0\Microsoft.FSharp.Targets" Condition=" Exists('$(MSBuildExtensionsPath32)\..\Microsoft SDKs\F#\3.0\Framework\v4.0\Microsoft.FSharp.Targets')" />
-  <PropertyGroup>
-    <PreBuildEvent>
-    </PreBuildEvent>
-  </PropertyGroup>
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
        Other similar extension points exist, see Microsoft.Common.targets.
   <Target Name="BeforeBuild">

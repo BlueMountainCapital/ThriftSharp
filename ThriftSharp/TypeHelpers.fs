@@ -18,14 +18,14 @@ module TypeHelpers =
     let (|Int32|_|)  (ty: System.Type) = if ty = typeof<Int32> then Some() else None
     let (|Int64|_|)  (ty: System.Type) = if ty = typeof<Int64> then Some() else None
     let (|String|_|) (ty: System.Type) = if ty = typeof<string> then Some() else None
-    let (|Record|_|) (ty: System.Type) = if FSharpType.IsRecord(ty, bindingFlags) then Some() else None
+    let (|Record|_|) (ty: System.Type) = if FSharpType.IsRecord(ty, bindingFlags) then Some(FSharpType.GetRecordFields(ty, bindingFlags)) else None
     let (|Option|_|) (ty: System.Type) = decomposeSingleGeneric<Option<_>> ty
-    let (|Union|_|)  (ty: System.Type) = if FSharpType.IsUnion(ty, bindingFlags) then Some() else None
-    let (|Tuple|_|)  (ty: System.Type) = if FSharpType.IsTuple(ty) then Some() else None
+    let (|Union|_|)  (ty: System.Type) = if FSharpType.IsUnion(ty, bindingFlags) then Some(FSharpType.GetUnionCases(ty, bindingFlags)) else None
+    let (|Tuple|_|)  (ty: System.Type) = if FSharpType.IsTuple(ty) then Some(FSharpType.GetTupleElements(ty)) else None
     let (|Array|_|)  (ty: System.Type) = if ty.IsArray then Some(ty.GetElementType()) else None
     let (|List|_|)   (ty: System.Type) = decomposeSingleGeneric<list<_>> ty
     let (|Set|_|)    (ty: System.Type) = decomposeSingleGeneric<Set<_>> ty
     let (|Map|_|)    (ty: System.Type) = if ty.IsConstructedGenericType && ty.GetGenericTypeDefinition() = typedefof<Map<_,_>> then 
                                             Some(ty.GenericTypeArguments.[0], ty.GenericTypeArguments.[1]) else None
     let (|Enum|_|)   (ty: System.Type) = if ty.IsEnum then Some() else None
-
+    let (|Generic|_|)(ty: System.Type) = if ty.IsConstructedGenericType then Some(ty.GenericTypeArguments) else None

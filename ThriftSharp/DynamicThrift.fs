@@ -2,7 +2,7 @@
 
 open Microsoft.FSharp.Reflection
 open Thrift.Protocol
-open Thrift.Transport
+open Thrift.Transport   
 open System
 open System.Reflection
 open TypeHelpers
@@ -23,7 +23,7 @@ with
         
 module DynamicThrift = 
 
-    let private fieldIds = Seq.initInfinite int16
+    let private fieldIds = Seq.initInfinite (fun i -> int16 (i+1))
     let private bindingFlags = BindingFlags.Public ||| BindingFlags.NonPublic
 
     // Option types are used to represent optional fields
@@ -81,7 +81,7 @@ module DynamicThrift =
                 let fld, writer = 
                     match ci.GetFields() with
                     | [| pi |] -> let ttype, writer = thriftWriter pi.PropertyType
-                                  TField(ci.Name, ttype, int16 ci.Tag), writer
+                                  TField(ci.Name, ttype, int16 (ci.Tag+1)), writer
                     | _ -> failwithf "ThriftWriter is not compatible with type %s - union cases must have exactly one data value" t.Name
 
                 let unionReader = FSharpValue.PreComputeUnionReader(ci, bindingFlags)
@@ -125,14 +125,12 @@ module DynamicThrift =
             oprot.WriteFieldStop()
             oprot.WriteStructEnd()
         
-    let private tupleWriter t thriftWriter =
-        let tupleElems = FSharpType.GetTupleElements(t)
+    let private tupleWriter t tupleElems thriftWriter =
         let structInfo = [ for idx, ty in Seq.zip fieldIds tupleElems -> (idx.ToString(), ty, idx) ]
         let tupleReader = FSharpValue.PreComputeTupleReader(t)
         writeStruct t.Name structInfo tupleReader thriftWriter
 
-    let private recordWriter t thriftWriter = 
-        let recFields = FSharpType.GetRecordFields(t, bindingFlags)
+    let private recordWriter t (recFields: PropertyInfo[]) thriftWriter = 
         let structInfo = [ for idx, pi in Seq.zip fieldIds recFields -> (pi.Name, pi.PropertyType, idx) ]
         let recReader = FSharpValue.PreComputeRecordReader(t, bindingFlags)
         writeStruct t.Name structInfo recReader thriftWriter
@@ -160,10 +158,10 @@ module DynamicThrift =
                 | List(t)   -> TType.List,      seqWriter t getWriter
                 | Set(t)    -> TType.Set,       setWriter t getWriter
                 | Map(k,v)  -> TType.Map,       mapWriter k v getWriter
-                | Union     -> TType.Struct,    unionWriter ty getWriter
-                | Tuple     -> TType.Struct,    tupleWriter ty getWriter
+                | Union(ci) -> TType.Struct,    unionWriter ty getWriter
+                | Tuple(es) -> TType.Struct,    tupleWriter ty es getWriter
                 // We put Record last because other types are represented as records
-                | Record    -> TType.Struct,    recordWriter ty getWriter      
+                | Record(fs)-> TType.Struct,    recordWriter ty fs getWriter      
                 | ty        -> failwithf "Unsupported type %s" ty.Name
 
     let private optionReader t containedType thriftReader =
@@ -250,7 +248,7 @@ module DynamicThrift =
         fun (prot: TProtocol) ->
             prot.ReadStructBegin() |> ignore
             let field = prot.ReadFieldBegin()
-            let ctor, (ttype, reader) = cases.[int field.ID]
+            let ctor, (ttype, reader) = cases.[int field.ID-1]
                       
             let value = reader prot
             prot.ReadFieldEnd()
@@ -282,7 +280,7 @@ module DynamicThrift =
             let rec readFields() = 
                 let fld = iprot.ReadFieldBegin()
                 if fld.Type <> TType.Stop then
-                    let id = int fld.ID
+                    let id = int fld.ID - 1
                 
                     if id < 0 || id >= numFields then
                         TProtocolUtil.Skip(iprot, fld.Type)
@@ -296,13 +294,12 @@ module DynamicThrift =
             unbox <| ctor data
 
 
-    let private tupleReader t = 
-        let tupleInfo = FSharpType.GetTupleElements(t)
+    let private tupleReader t tupleElems = 
         let ctor = FSharpValue.PreComputeTupleConstructor t
-        structReader tupleInfo ctor
+        structReader tupleElems ctor
 
-    let private recordReader t  =
-        let typeInfo = [| for pi in FSharpType.GetRecordFields(t, bindingFlags) -> pi.PropertyType |]
+    let private recordReader t (recordFields: PropertyInfo[]) =
+        let typeInfo = [| for pi in recordFields -> pi.PropertyType |]
         let ctor = FSharpValue.PreComputeRecordConstructor(t, bindingFlags)
         structReader typeInfo ctor
 
@@ -329,31 +326,17 @@ module DynamicThrift =
             | List(t)   -> TType.List,   listReader ty t getReader
             | Set(t)    -> TType.Set,    setReader ty t getReader
             | Map(k,v)  -> TType.Map,    mapReader ty k v getReader
-            | Union     -> TType.Struct, unionReader ty getReader
-            | Tuple     -> TType.Struct, tupleReader ty getReader
+            | Union(ci) -> TType.Struct, unionReader ty getReader
+            | Tuple(es) -> TType.Struct, tupleReader ty es getReader
             // We put Record last because other types are represented as Records
-            | Record    -> TType.Struct, recordReader ty getReader
+            | Record(fs)-> TType.Struct, recordReader ty fs getReader
             | ty        -> failwithf "Unsupported type %s" ty.Name
     
-//    let internal wrapReader (getCustomReader: Func<System.Type, Tuple<TType, Func<TProtocol, obj>>>) =
-//        match getCustomReader with
-//        | null -> fun _ -> None
-//        | f    -> fun t -> match getCustomReader.Invoke(t) with
-//                            | null -> None
-//                            | tpl -> Some(tpl.Item1, tpl.Item2.Invoke)
-
     /// C#-friendly wrapper to get a reader for a given type.
     /// getCustomReader is an optional function that can be used to provide type-specific reader
     let GetReaderFor(valType: System.Type, tryGetProxy) = 
         let ttype, reader = thriftReader tryGetProxy valType
         Func<TProtocol,obj>(reader)
-
-//    let internal wrapWriter (getCustomWriter: Func<System.Type, Tuple<TType, Action<TProtocol, obj>>>) =
-//        match getCustomWriter with
-//        | null -> fun _ -> None
-//        | f    -> fun t -> match getCustomWriter.Invoke(t) with
-//                            | null -> None
-//                            | tpl -> Some(tpl.Item1, fun prot o -> tpl.Item2.Invoke(prot, o))
 
     /// C#-friendly wrapper to get a writer for a given type.
     /// getCustomWriter is an optional function that can be used to provide type-specific writer
