@@ -1,6 +1,8 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio 2012
+# Visual Studio 2013
+VisualStudioVersion = 12.0.20617.1 PREVIEW
+MinimumVisualStudioVersion = 10.0.40219.1
 Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "ThriftSharp", "ThriftSharp\ThriftSharp.fsproj", "{5D2A7450-F061-430B-90D5-6978D922CF2B}"
 EndProject
 Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "ThriftSharp.Test", "ThriftSharp.Test\ThriftSharp.Test.fsproj", "{9ED3421E-3A6B-4A78-8EE6-0164B56DC725}"
@@ -13,6 +15,13 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ThriftSharp.Test.ThriftGene
 	ProjectSection(ProjectDependencies) = postProject
 		{0083FB53-53A7-4FA2-AED9-D9A31CB634A2} = {0083FB53-53A7-4FA2-AED9-D9A31CB634A2}
 		{D196D0BF-18BE-418D-871C-2B2FE38F74F7} = {D196D0BF-18BE-418D-871C-2B2FE38F74F7}
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = ".nuget", ".nuget", "{57F3D5E4-0305-42C7-8E5A-FDA923CB21A0}"
+	ProjectSection(SolutionItems) = preProject
+		.nuget\NuGet.Config = .nuget\NuGet.Config
+		.nuget\NuGet.exe = .nuget\NuGet.exe
+		.nuget\NuGet.targets = .nuget\NuGet.targets
 	EndProjectSection
 EndProject
 Global
